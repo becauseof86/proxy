@@ -4,7 +4,7 @@
 #
 # Don't forget to add your pipeline to the ITEM_PIPELINES setting
 # See: http://doc.scrapy.org/en/latest/topics/item-pipeline.html
-import MySQLdb
+import mysql.connector
 
 
 class ProxyPipeline(object):
@@ -20,7 +20,7 @@ class ProxyPipeline(object):
         return cls(crawler.settings.get('MYSQL_HOST'),crawler.settings.get('MYSQL_USER'),crawler.settings.get('MYSQL_PASSWD'),crawler.settings.get('MYSQL_DB'),crawler.settings.get('MYSQL_PORT'))
     
     def open_spider(self,spider):
-        self.connection=MySQLdb.connect(self.mysql_host,self.mysql_user,self.mysql_passwd,self.mysql_db,self.mysql_port)
+        self.connection=mysql.connector.connect(host=self.mysql_host,user=self.mysql_user,password=self.mysql_passwd,database=self.mysql_db,port=self.mysql_port)
         self.cursor=self.connection.cursor()
     def close_spider(self,spider):
         self.cursor.close()

@@ -2,7 +2,14 @@
 import scrapy
 import re
 from itertools import groupby
-import MySQLdb
+try:
+    import MySQLdb as mysql
+except:
+    import mysql.connector as mysql
+from scrapy import signals
+import logging
+
+logger=logging.getLogger(__name__)
 
 class ProxySpider(scrapy.Spider):
     name='proxy'
@@ -19,7 +26,7 @@ class ProxySpider(scrapy.Spider):
                     ('http://www.xicidaili.com/nt',self.parse_xici)]
         url_goubanjia=[('http://www.goubanjia.com/free/gngn/index{}.shtml'.format(i),self.parse_goubanjia) for i in range(1,page+1)]
         urls=dict(url_kuaidaili+url_66ip+url_youdaili+url_xici+url_goubanjia)
-        print urls
+        logger.info(';'.join(urls.keys()))
         for url,method in urls.items():
             yield scrapy.Request(url,method,dont_filter=True)
         
@@ -98,40 +105,109 @@ class ProxyValidSpider(scrapy.Spider):
     'CONCURRENT_REQUESTS' : 32,
     'CONCURRENT_REQUESTS_PER_DOMAIN' : 32
     }
+    def __init__(self,settings):
+        self.mysql_host=settings.get('MYSQL_HOST')
+        self.mysql_user=settings.get('MYSQL_USER')
+        self.mysql_passwd=settings.get('MYSQL_PASSWD')
+        self.mysql_db=settings.get('MYSQL_DB')
+        self.mysql_port=settings.get('MYSQL_PORT')
+        try:
+            self.connection=mysql.connect(self.mysql_host,self.mysql_user,self.mysql_passwd,self.mysql_db,self.mysql_port)
+        except:
+            self.connection=mysql.connect(host=self.mysql_host,user=self.mysql_user,password=self.mysql_passwd,database=self.mysql_db,port=self.mysql_port)
+        self.cursor=self.connection.cursor()
+        super(ProxyValidSpider,self).__init__()
+    @classmethod
+    def from_crawler(cls,crawler):
+        settings=crawler.settings
+        spider=cls(settings)
+        crawler.signals.connect(spider.close_spider, signal=signals.spider_closed)
+        return spider
     def start_requests(self):
-        self.mysql_host=self.settings.get('MYSQL_HOST')
-        self.mysql_user=self.settings.get('MYSQL_USER')
-        self.mysql_passwd=self.settings.get('MYSQL_PASSWD')
-        self.mysql_db=self.settings.get('MYSQL_DB')
-        self.mysql_port=self.settings.get('MYSQL_PORT')
-        connection=MySQLdb.connect(self.mysql_host,self.mysql_user,self.mysql_passwd,self.mysql_db,self.mysql_port)
-        cursor=connection.cursor()
+        
         sql='SELECT * FROM proxy'
-        cursor.execute(sql)
-        result_tuple=cursor.fetchall()
+        self.cursor.execute(sql)
+        result_tuple=self.cursor.fetchall()
         if result_tuple:
-            print cursor.execute('DELETE FROM proxy')    
-        cursor.close()
-        connection.commit()
-        connection.close()
+            self.cursor.execute('DELETE FROM proxy')    
+        self.connection.commit()
         #print result_tuple
         for proxy_tuple in result_tuple:
             yield scrapy.Request(url='https://secure3.hilton.com/en_US/dt/reservation/book.htm?internalDeepLinking=true?inputModule=HOTEL_SEARCH&ctyhocn=WUXXDDI',callback=self.after_baidu,meta={'proxy':proxy_tuple[0],'dont_retry':True,'download_timeout':25},dont_filter=True)
-    def after_baidu(self,response):
-        
+        '''
+        for proxy_tuple in result_tuple: #ip库中的ip代理 去跑2次 任意一次成功 就可以入库 针对ip不稳定 或者库里ip资源太少 且用且珍惜
+            yield scrapy.Request(url='https://secure3.hilton.com/en_US/dt/reservation/book.htm?internalDeepLinking=true?inputModule=HOTEL_SEARCH&ctyhocn=WUXXDDI',callback=self.after_baidu,meta={'proxy':proxy_tuple[0],'dont_retry':True,'download_timeout':25},dont_filter=True)
+            '''
+    def after_baidu(self,response): 
         if response.status==200:
-            connection=MySQLdb.connect(self.mysql_host,self.mysql_user,self.mysql_passwd,self.mysql_db,self.mysql_port)
-            cursor=connection.cursor()
             sql='INSERT IGNORE INTO validproxy VALUES ("{}")'.format(response.meta['proxy'])
-            res=cursor.execute(sql)
+            self.cursor.execute(sql)
             print '-------------------------------------'
             print response.meta['proxy'],response.status
-            print res
+            print str(self.cursor.rowcount)
             print '-------------------------------------'
-            cursor.close()
-            connection.commit()
-            connection.close()
+            self.connection.commit()
+    def close_spider(self):
+        self.cursor.close()
+        self.connection.close()
+        print '-----------------'
+        print u'closing database'
+        print '-----------------'
         
+class ProxyValidAgainSpider(scrapy.Spider):
+    name='validagain'
+    custom_settings={
+    'DOWNLOAD_DELAY' : 0.1,
+    'CONCURRENT_REQUESTS' : 32,
+    'CONCURRENT_REQUESTS_PER_DOMAIN' : 32
+    }
+    def __init__(self,settings):
+        self.mysql_host=settings.get('MYSQL_HOST')
+        self.mysql_user=settings.get('MYSQL_USER')
+        self.mysql_passwd=settings.get('MYSQL_PASSWD')
+        self.mysql_db=settings.get('MYSQL_DB')
+        self.mysql_port=settings.get('MYSQL_PORT')
+        try:
+            self.connection=mysql.connect(self.mysql_host,self.mysql_user,self.mysql_passwd,self.mysql_db,self.mysql_port)
+        except:
+            self.connection=mysql.connect(host=self.mysql_host,user=self.mysql_user,password=self.mysql_passwd,database=self.mysql_db,port=self.mysql_port)
+        self.cursor=self.connection.cursor()
+        super(ProxyValidAgainSpider,self).__init__()
+    @classmethod
+    def from_crawler(cls,crawler):
+        settings=crawler.settings
+        spider=cls(settings)
+        crawler.signals.connect(spider.close_spider, signal=signals.spider_closed)
+        return spider
+    def start_requests(self):
         
+        sql='SELECT * FROM validproxy'
+        self.cursor.execute(sql)
+        result_tuple=self.cursor.fetchall()
+        if result_tuple:
+            self.cursor.execute('DELETE FROM validproxy')    
+        self.connection.commit()
+        #print result_tuple
+        for proxy_tuple in result_tuple:
+            yield scrapy.Request(url='https://secure3.hilton.com/en_US/dt/reservation/book.htm?internalDeepLinking=true?inputModule=HOTEL_SEARCH&ctyhocn=WUXXDDI',callback=self.after_baidu,meta={'proxy':proxy_tuple[0],'dont_retry':True,'download_timeout':25},dont_filter=True)
+        '''
+        for proxy_tuple in result_tuple: #ip库中的ip代理 去跑2次 任意一次成功 就可以入库 针对ip不稳定 或者库里ip资源太少 且用且珍惜
+            yield scrapy.Request(url='https://secure3.hilton.com/en_US/dt/reservation/book.htm?internalDeepLinking=true?inputModule=HOTEL_SEARCH&ctyhocn=WUXXDDI',callback=self.after_baidu,meta={'proxy':proxy_tuple[0],'dont_retry':True,'download_timeout':25},dont_filter=True)
+            '''
+    def after_baidu(self,response): 
+        if response.status==200:
+            sql='INSERT IGNORE INTO validproxy VALUES ("{}")'.format(response.meta['proxy'])
+            self.cursor.execute(sql)
+            print '-------------------------------------'
+            print response.meta['proxy'],response.status
+            print str(self.cursor.rowcount)
+            print '-------------------------------------'
+            self.connection.commit()
+    def close_spider(self):
+        self.cursor.close()
+        self.connection.close()
+        print '-----------------'
+        print u'closing database'
+        print '-----------------'        
 
 
